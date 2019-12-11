@@ -40,16 +40,14 @@ class InsightFace(object):
         tf.import_graph_def(graph_def,input_map=None,return_elements=None,name="")
 
         self.image_input = tf.get_default_graph().get_tensor_by_name('data:0')
-        # keep_prob = tf.get_default_graph().get_tensor_by_name('keep_prob:0')
-        # is_train = tf.get_default_graph().get_tensor_by_name('training_mode:0')
         embedding = tf.get_default_graph().get_tensor_by_name('output:0')
-        embedding_norm = tf.norm(embedding, axis=1, keep_dims=True)
+        embedding_norm = tf.norm(embedding, axis=1, keepdims=True)
         self.embedding = tf.div(embedding, embedding_norm, name='norm_embedding')
 
         self.target_emb = tf.placeholder(tf.float32,shape=[None,512],name='target_emb_input')
         self.cos_loss = tf.reduce_sum(tf.multiply(self.embedding, self.target_emb))
         self.l2_loss = tf.norm(self.embedding-self.target_emb)
-        self.grads_cosine_on_image = tf.gradients(self.l2_loss, self.image_input)
+        self.grads_op = tf.gradients(self.l2_loss, self.image_input)
 
         # self.fdict = {keep_prob:1.0, is_train:False}
         self.fdict = {}
@@ -69,22 +67,20 @@ class InsightFace(object):
         return self.sess.run([self.cos_loss, self.l2_loss], feed_dict=self.fdict)
     
     def optimize(self, imgs):
-        for i in range(200):
+        eps = 1.
+        for i in range(100):
             self.fdict[self.image_input] = imgs
             grads, cos_loss, l2_loss = self.sess.run( \
-                [self.grads_cosine_on_image, self.cos_loss, self.l2_loss], \
-                feed_dict=self.fdict)
+                [self.grads_op, self.cos_loss, self.l2_loss], feed_dict=self.fdict)
             grads = grads[0]
-            # print('grads:', grads)
+            grads = np.sign(grads)
             # print('grads.shape:', grads.shape)
-            # imgs = imgs/255.
-            imgs = np.clip(imgs-grads,0,255).astype(np.int8)
-            # print('after modification, imgs:', imgs)
-            # imgs = (imgs*255).astype(np.int8)
-            print('index:', i, ', cos_loss:', cos_loss, ', l2_loss:', l2_loss)
+            imgs = imgs-grads*eps
+            imgs = np.clip(imgs,0,255)
+            print('index:', i, ', cosine_similarity:', cos_loss, ', l2_dist:', l2_loss)
         imgs = np.squeeze(imgs)
         print('imgs.shape:', imgs.shape)
-        save_image(imgs/255., 'test.jpg')
+        save_image(imgs, 'test.jpg')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -93,8 +89,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     insight_face = InsightFace('r100.pb')
-    img1 = load_image_for_insightface(args.img_path_1, hwc2chw=False)
-    img2 = load_image_for_insightface(args.img_path_2, hwc2chw=False)
+    img1 = load_image_for_insightface(args.img_path_1, align=False, hwc2chw=False)
+    img2 = load_image_for_insightface(args.img_path_2, align=False, hwc2chw=False)
     e1 = insight_face.calc_embedding(img1)
     e2 = insight_face.calc_embedding(img2)
     calc_dist(e1, e2)
@@ -106,4 +102,4 @@ if __name__ == "__main__":
     insight_face.set_target_embedding(e1)
     print('calculate in tf[similarity,l2_dist]:', insight_face.compare(img2))
 
-    # insight_face.optimize(img2)
+    insight_face.optimize(img2)
